@@ -233,6 +233,16 @@ func CleanAliases(in map[string]string) (map[string]string, error) {
 		if name == "" || target == "" {
 			return nil, errors.New("A model name needs both the name and the model it stands for")
 		}
+		if name == "*" {
+			// local patch: "*" = "<provider>/*" sends every bare model id
+			// the key asks for to that provider (see AliasFor)
+			p, ok := strings.CutSuffix(target, "/*")
+			if !ok || p == "" || strings.ContainsAny(p, "/*") || IsPattern(p) {
+				return nil, errors.New("The name * stands for every model of one provider, <provider>/*: " + target)
+			}
+			out[name] = target
+			continue
+		}
 		if len(name) > 120 || strings.ContainsFunc(name, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) || r == '*' }) || IsPattern(name) {
 			return nil, errors.New("A model name is one word of at most 120 characters, with no * or re: pattern: " + name)
 		}
@@ -256,9 +266,14 @@ func CleanAliases(in map[string]string) (map[string]string, error) {
 // AliasFor is the model a name the key gives stands for, letter case aside.
 func (who Identity) AliasFor(name string) (string, bool) {
 	for a, t := range who.Aliases {
-		if strings.EqualFold(a, name) {
+		if a != "*" && strings.EqualFold(a, name) {
 			return t, true
 		}
+	}
+	// local patch: a bare id no name above matched goes to the provider
+	// "*" names; an id with a provider in it is left as asked
+	if t, ok := who.Aliases["*"]; ok && name != "" && !strings.Contains(name, "/") {
+		return strings.TrimSuffix(t, "*") + name, true
 	}
 	return "", false
 }
@@ -266,7 +281,7 @@ func (who Identity) AliasFor(name string) (string, bool) {
 // AliasOf is the name the key gives the model id, if it does (case aside).
 func (who Identity) AliasOf(id string) (string, bool) {
 	for a, t := range who.Aliases {
-		if strings.EqualFold(t, id) {
+		if a != "*" && strings.EqualFold(t, id) {
 			return a, true
 		}
 	}
